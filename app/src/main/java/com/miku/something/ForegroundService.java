@@ -6,7 +6,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.media.MediaPlayer;
@@ -14,17 +15,13 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.DisplayMetrics;
 import android.view.Choreographer;
-import android.view.Gravity;
 import android.view.WindowManager;
-import android.widget.ImageView;
 
 import androidx.core.app.NotificationCompat;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Foreground service that:
- *  - shows several images bouncing around the screen as system overlays,
+ *  - shows several images bouncing around the screen in ONE full-screen overlay,
  *  - loops an audio track,
  *  - shows an ongoing notification with a "Stop" action,
  *  - swaps the launcher icon while it is running.
@@ -50,24 +47,25 @@ public class ForegroundService extends Service {
     // How many bouncing images are created
     private static final int IMAGE_COUNT = 3;
 
+    // Opacity of the overlay window (1 = fully opaque).
+    // Android 12+ blocks touches to the apps below a pass-through overlay that is more opaque
+    // than 0.8, so this value keeps the phone usable while the overlay is shown.
+    private static final float OVERLAY_ALPHA = 0.8f;
+
     private NotificationManager notificationManager;
     private WindowManager windowManager;
-
-    // Screen size in pixels, used to detect when an image hits an edge
-    private int screenWidth;
-    private int screenHeight;
 
     // Image size and speed converted from dp to pixels
     private int imageSizePx;
     private float speedPxPerSec;
 
-    // All the images currently displayed on the screen
-    private final List<BouncingImage> bouncingImages = new ArrayList<>();
+    // The single overlay view that draws and animates all the images
+    private BouncingView bouncingView;
 
     // Lets MainActivity know whether the service is already running
     public static boolean isRunning = false;
 
-    // True once the overlays and the audio were created, so a repeated
+    // True once the overlay and the audio were created, so a repeated
     // onStartCommand() (for example a sticky restart) does not duplicate them
     private boolean isSetupDone = false;
 
@@ -90,7 +88,9 @@ public class ForegroundService extends Service {
                     : (frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000f;
             lastFrameTimeNanos = frameTimeNanos;
 
-            updateImages(Math.min(deltaSec, MAX_FRAME_DELTA_SEC));
+            // Move the images, then ask the view to redraw in this same frame
+            bouncingView.step(speedPxPerSec * Math.min(deltaSec, MAX_FRAME_DELTA_SEC));
+            bouncingView.invalidate();
 
             // Schedule the next frame
             Choreographer.getInstance().postFrameCallback(this);
@@ -105,7 +105,7 @@ public class ForegroundService extends Service {
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
-        // Read the screen size and compute the pixel values
+        // Compute the pixel values used by the animation
         updateScreenMetrics();
     }
 
@@ -148,7 +148,7 @@ public class ForegroundService extends Service {
         // requires it after every startForegroundService() call
         startForeground(NOTIFICATION_ID, notification);
 
-        // Already set up: do not create a second set of overlays and a second player
+        // Already set up: do not create a second overlay and a second player
         if (isSetupDone) {
             return START_STICKY;
         }
@@ -166,22 +166,6 @@ public class ForegroundService extends Service {
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-
-        // Screen rotated or resized: recompute the sizes and resize the existing overlays
-        updateScreenMetrics();
-        for (BouncingImage bi : bouncingImages) {
-            bi.params.width = imageSizePx;
-            bi.params.height = imageSizePx;
-            checkEdges(bi);
-            bi.params.x = Math.round(bi.x);
-            bi.params.y = Math.round(bi.y);
-            windowManager.updateViewLayout(bi.view, bi.params);
-        }
-    }
-
-    @Override
     public void onDestroy() {
         super.onDestroy();
         isRunning = false;
@@ -190,13 +174,11 @@ public class ForegroundService extends Service {
         // Stop the animation loop
         Choreographer.getInstance().removeFrameCallback(frameCallback);
 
-        // Remove every overlay from the window manager
-        for (BouncingImage bi : bouncingImages) {
-            if (bi.view != null && bi.view.isAttachedToWindow()) {
-                windowManager.removeView(bi.view);
-            }
+        // Remove the overlay from the window manager
+        if (bouncingView != null && bouncingView.isAttachedToWindow()) {
+            windowManager.removeView(bouncingView);
         }
-        bouncingImages.clear();
+        bouncingView = null;
 
         // Stop and release the audio player
         if (mediaPlayer != null) {
@@ -212,14 +194,14 @@ public class ForegroundService extends Service {
         return null;
     }
 
-    /**
-     * Reads the current screen size and converts the dp constants to pixels.
-     * Called on creation and every time the configuration changes (rotation).
-     */
+    /** Converts the dp constants to pixels, never letting an image exceed the smaller screen side. */
     @SuppressWarnings("deprecation") // getRealMetrics is only used below API 30
     private void updateScreenMetrics() {
+        int screenWidth;
+        int screenHeight;
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Modern API: bounds of the whole screen in the current rotation
+            // Modern API: bounds of the whole screen
             Rect bounds = windowManager.getMaximumWindowMetrics().getBounds();
             screenWidth = bounds.width();
             screenHeight = bounds.height();
@@ -232,91 +214,80 @@ public class ForegroundService extends Service {
         }
 
         float density = getResources().getDisplayMetrics().density;
-
-        // Never let an image be larger than the smaller side of the screen
         imageSizePx = Math.round(Math.min(IMAGE_SIZE_DP * density, Math.min(screenWidth, screenHeight)));
         speedPxPerSec = SPEED_DP_PER_SEC * density;
     }
 
-    /** Creates the overlay ImageViews and adds them to the window manager. */
+    /** Creates the single full-screen overlay that draws all the images. */
     private void setupImages() {
-        for (int i = 0; i < IMAGE_COUNT; i++) {
+        // Decode the image once, already scaled to its final size
+        Bitmap bitmap = loadScaledBitmap(R.drawable.hitler, imageSizePx);
+        bouncingView = new BouncingView(this, bitmap, imageSizePx, IMAGE_COUNT);
 
-            // Spread the images diagonally so they do not start on top of each other
-            float startX = (screenWidth  / (float) IMAGE_COUNT) * i;
-            float startY = (screenHeight / (float) IMAGE_COUNT) * i;
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                // Does not take focus and lets touches pass through to the apps below
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        // Cover the whole screen, including the status and navigation bars
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        // Render with the GPU. Overlay windows are NOT hardware accelerated
+                        // by default, which makes animations stutter.
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT
+        );
+        params.alpha = OVERLAY_ALPHA;
 
-            BouncingImage bi = new BouncingImage(startX, startY);
-
-            bi.view = new ImageView(this);
-            bi.view.setImageResource(R.drawable.hitler);
-
-            // Overlay window parameters: drawn above other apps, does not take focus
-            bi.params = new WindowManager.LayoutParams(
-                    imageSizePx,
-                    imageSizePx,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                    PixelFormat.TRANSLUCENT
-            );
-            // LEFT (not START) so x is always measured from the left edge,
-            // even when the device language is right-to-left (Arabic)
-            bi.params.gravity = Gravity.TOP | Gravity.LEFT;
-
-            // Make sure the starting position is inside the screen
-            checkEdges(bi);
-            bi.params.x = Math.round(bi.x);
-            bi.params.y = Math.round(bi.y);
-
-            bouncingImages.add(bi);
-            windowManager.addView(bi.view, bi.params);
+        // Also draw under the camera cutout (notch)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
+
+        windowManager.addView(bouncingView, params);
     }
 
-    /** Moves every image according to the elapsed time and applies the new position to its window. */
-    private void updateImages(float deltaSec) {
-        // Distance covered during this frame, in pixels
-        float distance = speedPxPerSec * deltaSec;
+    /**
+     * Decodes a drawable resource directly at the size it will be shown,
+     * keeping its aspect ratio (same as ImageView's default "fit center").
+     * Decoding at the final size saves memory and avoids scaling work on every frame.
+     */
+    private Bitmap loadScaledBitmap(int resId, int targetSize) {
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        // Do not let the system rescale the bitmap according to screen density
+        options.inScaled = false;
 
-        for (BouncingImage bi : bouncingImages) {
-            bi.x += bi.xDirection * distance;
-            bi.y += bi.yDirection * distance;
+        // First pass: read only the image dimensions
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeResource(getResources(), resId, options);
 
-            // Bounce if an edge was reached
-            checkEdges(bi);
-
-            bi.params.x = Math.round(bi.x);
-            bi.params.y = Math.round(bi.y);
-            windowManager.updateViewLayout(bi.view, bi.params);
-        }
-    }
-
-    /** Keeps the image inside the screen and reverses its direction on contact. */
-    private void checkEdges(BouncingImage bi) {
-        float maxX = screenWidth - imageSizePx;
-        float maxY = screenHeight - imageSizePx;
-
-        // Right edge
-        if (bi.x >= maxX) {
-            bi.x = maxX;
-            bi.xDirection = -1;
-        }
-        // Left edge
-        if (bi.x <= 0) {
-            bi.x = 0;
-            bi.xDirection = 1;
+        // Largest power-of-two subsampling that still leaves the image at least as big as the target
+        int sampleSize = 1;
+        while (options.outWidth / (sampleSize * 2) >= targetSize
+                && options.outHeight / (sampleSize * 2) >= targetSize) {
+            sampleSize *= 2;
         }
 
-        // Bottom edge
-        if (bi.y >= maxY) {
-            bi.y = maxY;
-            bi.yDirection = -1;
+        // Second pass: decode the pixels
+        options.inJustDecodeBounds = false;
+        options.inSampleSize = sampleSize;
+        Bitmap decoded = BitmapFactory.decodeResource(getResources(), resId, options);
+
+        // Final exact scaling so the image fits inside the square box
+        float scale = Math.min(
+                targetSize / (float) decoded.getWidth(),
+                targetSize / (float) decoded.getHeight());
+        int width = Math.max(1, Math.round(decoded.getWidth() * scale));
+        int height = Math.max(1, Math.round(decoded.getHeight() * scale));
+
+        Bitmap scaled = Bitmap.createScaledBitmap(decoded, width, height, true);
+        if (scaled != decoded) {
+            decoded.recycle();
         }
-        // Top edge
-        if (bi.y <= 0) {
-            bi.y = 0;
-            bi.yDirection = 1;
-        }
+        return scaled;
     }
 
     /** Starts the looping audio track from res/raw. */
@@ -351,25 +322,6 @@ public class ForegroundService extends Service {
         );
         channel.setDescription(getString(R.string.notification_channel_description));
         notificationManager.createNotificationChannel(channel);
-    }
-
-    /** Holds the state of one bouncing image: its view, window params, position and direction. */
-    private static class BouncingImage {
-        ImageView view;
-        WindowManager.LayoutParams params;
-
-        // Position in pixels (float so slow movement is not lost to rounding)
-        float x;
-        float y;
-
-        // Direction on each axis: +1 = right/down, -1 = left/up
-        int xDirection = 1;
-        int yDirection = 1;
-
-        BouncingImage(float startX, float startY) {
-            this.x = startX;
-            this.y = startY;
-        }
     }
 
     /** Switches the launcher to the alternative icon and name. */
