@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default strings (English). Used whenever the device language has no dedicated folder. -->
+<resources>
+    <string name="app_name">Something</string>
+
+    <!-- Launcher label used by the alternative alias; same in every language -->
+    <string name="alt_app_label" translatable="false">Hi Hitler</string>
+
+    <!-- Toasts shown when a permission is denied -->
+    <string name="overlay_permission_required">The \"Display over other apps\" permission is required to continue</string>
+    <string name="notification_permission_required">The notification permission is required to run the service</string>
+
+    <!-- Foreground service notification -->
+    <string name="notification_title" translatable="false">Hi Hitler...</string>
+    <string name="notification_text">If you want to turn it off:</string>
+    <string name="notification_action_stop">Stop</string>
+
+    <!-- Notification channel (visible in the system notification settings) -->
+    <string name="notification_channel_name">Miku Channel</string>
+    <string name="notification_channel_description">Channel for the bouncing image service</string>
+</resources>

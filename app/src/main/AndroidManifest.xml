@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Draw the bouncing images above other apps -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Run the service in the foreground -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Show the service notification (runtime permission on Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- The real activity. Not exported: it is only reached through the aliases below.
+             It uses a transparent theme because it has no UI. -->
+        <activity
+            android:name=".MainActivity"
+            android:theme="@style/AppTheme.Transparent"
+            android:exported="false" />
+
+        <!-- Launcher entry 1: normal icon and name (enabled by default) -->
+        <activity-alias
+            android:name=".AliasDefault"
+            android:targetActivity=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Launcher entry 2: alternative icon and name (enabled at runtime by AppIconManager) -->
+        <activity-alias
+            android:name=".AliasAlt"
+            android:targetActivity=".MainActivity"
+            android:label="@string/alt_app_label"
+            android:icon="@drawable/icon_alt"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Service that draws the overlays and plays the audio.
+             Android 14+ requires the specialUse type to describe why it is needed. -->
+        <service
+            android:name=".ForegroundService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Shows animated overlay images with looping audio until the user stops it" />
+        </service>
+    </application>
+</manifest>

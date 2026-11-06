@@ -1,0 +1,18 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <!-- Base application theme. -->
+  <style name="Base.AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- Customize your theme here. -->
+    <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+  </style>
+
+  <style name="AppTheme" parent="Base.AppTheme" />
+
+  <!-- Fully transparent theme for MainActivity: it has no UI and finishes immediately,
+       so this avoids a blank window flashing on screen. -->
+  <style name="AppTheme.Transparent" parent="AppTheme">
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowAnimationStyle">@null</item>
+  </style>
+</resources>

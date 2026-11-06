@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Arabic strings. Used automatically when the device language is Arabic. -->
+<resources>
+    <string name="app_name">شيء ما</string>
+
+    <!-- Toasts shown when a permission is denied -->
+    <string name="overlay_permission_required">يجب منح إذن الرسم فوق التطبيقات للمتابعة</string>
+    <string name="notification_permission_required">يلزم منح إذن الإشعارات لتشغيل الخدمة</string>
+
+    <!-- Foreground service notification (the title is not translatable, see values/strings.xml) -->
+    <string name="notification_text">لو حابب تطفيه :</string>
+    <string name="notification_action_stop">إيقاف</string>
+
+    <!-- Notification channel (visible in the system notification settings) -->
+    <string name="notification_channel_name">قناة ميكو</string>
+    <string name="notification_channel_description">قناة خدمة الصور المرتدة</string>
+</resources>
